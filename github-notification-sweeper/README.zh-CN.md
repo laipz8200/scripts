@@ -17,7 +17,19 @@
 
 ## 用法
 
-先执行一次 dry run：
+直接从 GitHub 执行 dry run：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laipz8200/scripts/main/github-notification-sweeper/github-notification-sweeper.sh | bash -s -- OWNER/REPO
+```
+
+直接从 GitHub 运行，并将匹配的通知标记为完成：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laipz8200/scripts/main/github-notification-sweeper/github-notification-sweeper.sh | bash -s -- --apply OWNER/REPO
+```
+
+如果已经克隆了这个仓库，可以在当前目录运行：
 
 ```bash
 ./github-notification-sweeper.sh OWNER/REPO

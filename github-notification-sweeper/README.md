@@ -17,7 +17,19 @@ English | [中文](README.zh-CN.md)
 
 ## Usage
 
-Run a dry check first:
+Run a dry check directly from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laipz8200/scripts/main/github-notification-sweeper/github-notification-sweeper.sh | bash -s -- OWNER/REPO
+```
+
+Mark matching notification threads done directly from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laipz8200/scripts/main/github-notification-sweeper/github-notification-sweeper.sh | bash -s -- --apply OWNER/REPO
+```
+
+If you have the repository locally, run it from this directory instead:
 
 ```bash
 ./github-notification-sweeper.sh OWNER/REPO
