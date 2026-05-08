@@ -40,3 +40,9 @@
 - 不传 `--apply` 时，脚本只会打印匹配到的通知。
 - 传入 `--apply` 时，脚本会通过 `gh api` 调用 GitHub 通知接口，并将匹配的通知从收件箱中移除。
 - 每次运行都需要传入目标仓库。
+
+## 测试
+
+```bash
+./test-github-notification-sweeper.sh
+```

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$TEST_DIR/../github-notification-sweeper/github-notification-sweeper.sh"
+SCRIPT="$TEST_DIR/github-notification-sweeper.sh"
 
 fail() {
   echo "FAIL: $*" >&2

@@ -40,3 +40,9 @@ Mark matching notification threads done:
 - Without `--apply`, the script only prints matching notifications.
 - With `--apply`, the script calls the GitHub notifications API through `gh api` and removes matching threads from your notification inbox.
 - The target repository is required on every run.
+
+## Testing
+
+```bash
+./test-github-notification-sweeper.sh
+```
