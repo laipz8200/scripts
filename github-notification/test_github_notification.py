@@ -17,8 +17,9 @@ def notification(number, kind="Issue", unread=True, repo="octo/repo"):
     }
 
 
-@pytest.mark.parametrize("apply", [False, True])
-def test_resolved_notifications(monkeypatch, capsys, apply):
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("scope", [[], ["--unread"], ["--all"]])
+def test_sweep(monkeypatch, capsys, dry_run, scope):
     cases = [
         ("PullRequest", {"draft": True, "merged": True, "state": "closed"}, "draft"),
         ("PullRequest", {"merged": True, "state": "closed"}, "merged"),
@@ -26,22 +27,27 @@ def test_resolved_notifications(monkeypatch, capsys, apply):
         ("Issue", {"state": "closed"}, "closed"),
         ("PullRequest", {"state": "open"}, None),
         ("Issue", {"state": "open"}, None),
-    ] * 2
-    threads = [notification(i, kind) for i, (kind, _, _) in enumerate(cases)]
-    threads += [notification(20, unread=False), notification(21, "Release"), notification(22)]
+    ] * 2 + [("Issue", {"state": "closed"}, "closed")]
+    threads = [notification(i, kind, unread=i < 12) for i, (kind, _, _) in enumerate(cases)]
+    threads += [notification(21, "Release"), notification(22)]
     threads[-1]["subject"]["url"] = None
+    all_notifications = scope == ["--all"]
+    selected = [(thread, case) for thread, case in zip(threads, cases)
+                if all_notifications or thread["unread"]]
     requests, active, peak = [], 0, 0
 
     async def api(endpoint, *options):
         nonlocal active, peak
         requests.append((endpoint, options))
         if "notifications?" in endpoint:
-            assert endpoint == "/repos/octo/repo/notifications?all=false&per_page=50"
+            assert endpoint == (
+                f"/repos/octo/repo/notifications?all={str(all_notifications).lower()}&per_page=50"
+            )
             assert options == ("--paginate", "--slurp")
             return [threads[:3], threads[3:]]
         if options:
             assert options == ("--method", "DELETE")
-            assert len([url for url, opts in requests if not opts]) == len(cases)
+            assert len([url for url, opts in requests if not opts]) == len(selected)
             return None
         number = int(endpoint.rsplit("/", 1)[1])
         active += 1
@@ -51,42 +57,61 @@ def test_resolved_notifications(monkeypatch, capsys, apply):
         return cases[number][1]
 
     monkeypatch.setattr(app, "api", api)
-    app.main(["https://github.com/octo/repo.git/", *(["--apply"] if apply else [])])
-    matched = [(thread, case[2]) for thread, case in zip(threads, cases) if case[2]]
+    app.main(["sweep", "https://github.com/octo/repo.git/", *scope,
+              *(["--dry-run"] if dry_run else [])])
+    matched = [(thread, case[2]) for thread, case in selected if case[2]]
     assert capsys.readouterr().out.splitlines() == [
         f"[{state}] {thread['subject']['title']}" for thread, state in matched
     ]
     assert [url for url, opts in requests if opts == ("--method", "DELETE")] == (
-        [f"/notifications/threads/{thread['id']}" for thread, _ in matched] if apply else []
+        [] if dry_run else [f"/notifications/threads/{thread['id']}" for thread, _ in matched]
     )
     assert peak == 5
 
 
 @pytest.mark.parametrize("repo", [None, "octo/repo"])
-@pytest.mark.parametrize("apply", [False, True])
-def test_clear_all(monkeypatch, capsys, repo, apply):
-    threads = [notification(1), notification(2, "Release", unread=False)]
+@pytest.mark.parametrize("scope", [[], ["--unread"], ["--all"]])
+@pytest.mark.parametrize("command,dry_run", [("list", False), ("clear", False), ("clear", True)])
+def test_list_and_clear(monkeypatch, capsys, repo, scope, command, dry_run):
+    threads = [notification(1), notification(2, "Release", unread=False), notification(3, "Release")]
     threads[-1]["subject"]["url"] = None
     if not repo:
-        threads.append(notification(3, repo="other/repo"))
+        threads.append(notification(4, repo="other/repo"))
+    all_notifications = scope == ["--all"]
+    selected = [thread for thread in threads if all_notifications or thread["unread"]]
     api = AsyncMock(side_effect=[[threads[:1], threads[1:]], *([None] * len(threads))])
     monkeypatch.setattr(app, "api", api)
-    app.main(["--clear-all", *([repo] if repo else []), *(["--apply"] if apply else [])])
+    app.main([command, *scope, *([repo] if repo else []), *(["--dry-run"] if dry_run else [])])
     endpoint = f"/repos/{repo}/notifications" if repo else "/notifications"
     assert api.call_args_list[0].args == (
-        f"{endpoint}?all=true&per_page=50", "--paginate", "--slurp"
+        f"{endpoint}?all={str(all_notifications).lower()}&per_page=50", "--paginate", "--slurp"
     )
     assert [call.args for call in api.call_args_list[1:]] == (
-        [(f"/notifications/threads/{thread['id']}", "--method", "DELETE") for thread in threads]
-        if apply else []
+        [(f"/notifications/threads/{thread['id']}", "--method", "DELETE") for thread in selected]
+        if command == "clear" and not dry_run else []
     )
-    assert len(capsys.readouterr().out.splitlines()) == len(threads)
+    assert capsys.readouterr().out.splitlines() == [
+        f"[{'unread' if thread['unread'] else 'read'}] "
+        f"{thread['repository']['full_name'] + ': ' if not repo else ''}{thread['subject']['title']}"
+        for thread in selected
+    ]
+
+
+@pytest.mark.parametrize("command", ["list", "clear", "sweep"])
+def test_empty_notifications(monkeypatch, capsys, command):
+    api = AsyncMock(return_value=[[]])
+    monkeypatch.setattr(app, "api", api)
+    app.main([command])
+    api.assert_awaited_once_with("/notifications?all=false&per_page=50", "--paginate", "--slurp")
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("argv,code", [
-    ([], 2), (["--help"], 0), (["invalid"], 2), (["../repo"], 2),
-    (["https://example.com/octo/repo"], 2), (["octo/repo/extra"], 2),
-    (["octo/repo", "extra"], 2), (["--unknown", "octo/repo"], 2),
+    ([], 2), (["--help"], 0), (["invalid"], 2), (["list", "../repo"], 2),
+    (["list", "https://example.com/octo/repo"], 2), (["list", "octo/repo/extra"], 2),
+    (["list", "octo/repo", "extra"], 2), (["list", "--unknown"], 2),
+    (["list", "--unread", "--all"], 2), (["clear", "--unread", "--all"], 2),
+    (["sweep", "--unread", "--all"], 2), (["list", "--dry-run"], 2),
 ])
 def test_cli_rejects_invalid_arguments_before_network(monkeypatch, argv, code):
     api = AsyncMock()
@@ -131,7 +156,7 @@ def test_network_failure_exits_without_deleting(monkeypatch, capsys, failure):
     api = AsyncMock(side_effect=failure)
     monkeypatch.setattr(app, "api", api)
     with pytest.raises(SystemExit) as error:
-        app.main(["--clear-all", "--apply"])
+        app.main(["clear", "--all"])
     assert error.value.code == 1
     assert str(failure) in capsys.readouterr().err
     assert api.await_count == 1
@@ -143,6 +168,78 @@ def test_rejects_untrusted_subject_url(monkeypatch):
     api = AsyncMock(return_value=[[thread]])
     monkeypatch.setattr(app, "api", api)
     with pytest.raises(SystemExit) as error:
-        app.main(["octo/repo", "--apply"])
+        app.main(["sweep", "octo/repo"])
     assert error.value.code == 1
     assert api.await_count == 1
+
+
+def test_clear_reports_task_failure(monkeypatch, capsys):
+    api = AsyncMock(side_effect=[[[notification(1)]], RuntimeError("HTTP 403")])
+    monkeypatch.setattr(app, "api", api)
+    with pytest.raises(SystemExit) as error:
+        app.main(["clear"])
+    assert error.value.code == 1
+    assert api.await_count == 2
+    assert api.call_args.args == ("/notifications/threads/1", "--method", "DELETE")
+    assert capsys.readouterr().err == "error: HTTP 403\n"
+
+
+@pytest.mark.parametrize("command", ["clear", "sweep"])
+def test_clearing_runs_concurrently_and_waits_for_completion(monkeypatch, command):
+    active, peak, completed = 0, 0, set()
+
+    async def api(endpoint, *options):
+        nonlocal active, peak
+        if "notifications?" in endpoint:
+            return [[notification(i) for i in range(12)]]
+        if not options:
+            return {"state": "closed"}
+        assert options == ("--method", "DELETE")
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        completed.add(endpoint)
+
+    monkeypatch.setattr(app, "api", api)
+    app.main([command])
+    assert peak == 5
+    assert active == 0
+    assert completed == {f"/notifications/threads/{i}" for i in range(12)}
+
+
+@pytest.mark.parametrize("command", ["clear", "sweep"])
+def test_task_failure_cancels_siblings_before_run_returns(monkeypatch, command):
+    async def check():
+        ready = asyncio.Event()
+        started, cancelled, jobs = set(), set(), set()
+
+        async def api(endpoint, *options):
+            if "notifications?" in endpoint:
+                return [[notification(i) for i in range(12)]]
+            if command == "sweep":
+                assert not options  # Failed subject checks must never start clearing.
+            started.add(endpoint)
+            jobs.add(asyncio.current_task())
+            if len(started) == 5:
+                ready.set()
+            if endpoint.endswith("/0"):
+                await ready.wait()
+                raise RuntimeError("HTTP 403")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.add(endpoint)
+                raise
+
+        monkeypatch.setattr(app, "api", api)
+        with pytest.raises(ExceptionGroup) as error:
+            await app.run(command)
+        assert str(error.value.exceptions[0]) == "HTTP 403"
+        assert cancelled == {endpoint for endpoint in started if not endpoint.endswith("/0")}
+        assert all(task.done() for task in jobs)
+
+    async def timed_check():
+        await asyncio.wait_for(check(), timeout=1)
+
+    asyncio.run(timed_check())

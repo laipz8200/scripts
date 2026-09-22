@@ -8,7 +8,7 @@
 
 | 脚本 | 说明 |
 | --- | --- |
-| [GitHub Notification](github-notification/README.zh-CN.md) | 预览已处理的未读 GitHub 通知，或通过 `--clear-all` 选择全部通知，再使用 `--apply` 将它们标记为完成。 |
+| [GitHub Notification](github-notification/README.zh-CN.md) | 通过 `list`、`clear`、`sweep` 管理 GitHub 通知，统一支持 `--unread`（默认）和 `--all` 筛选。 |
 
 ## 许可证
 

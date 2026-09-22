@@ -8,7 +8,7 @@ This repository contains convenience scripts that I (-LAN) use in daily work. Yo
 
 | Script | Description |
 | --- | --- |
-| [GitHub Notification](github-notification/README.md) | Previews resolved unread GitHub notifications, or all notifications with `--clear-all`, and marks them done with `--apply`. |
+| [GitHub Notification](github-notification/README.md) | Lists, clears, or sweeps GitHub notifications with consistent `--unread` (default) and `--all` filters. |
 
 ## License
 

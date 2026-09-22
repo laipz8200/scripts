@@ -30,27 +30,31 @@ async def api(endpoint, *options):
     return json.loads(stdout) if stdout.strip() else None
 
 
-async def sweep(repo, apply=False, clear_all=False):
+async def run(command, repo=None, all_notifications=False, dry_run=False):
     endpoint = f"/repos/{repo}/notifications" if repo else "/notifications"
     pages = await api(
-        f"{endpoint}?all={str(clear_all).lower()}&per_page=50", "--paginate", "--slurp"
+        f"{endpoint}?all={str(all_notifications).lower()}&per_page=50", "--paginate", "--slurp"
     )
-    threads = [thread for page in pages for thread in page]
+    # Snapshot all pages before deleting so pagination cannot skip threads.
+    threads = [thread for page in pages for thread in page if all_notifications or thread["unread"]]
     limit = asyncio.Semaphore(5)
 
+    async def request(endpoint, *options):
+        async with limit:
+            return await api(endpoint, *options)
+
     async def status(thread):
-        if clear_all:
-            return "all"
+        if command != "sweep":
+            return "unread" if thread["unread"] else "read"
         subject = thread["subject"]
-        if not thread["unread"] or subject["type"] not in {"PullRequest", "Issue"}:
+        if subject["type"] not in {"PullRequest", "Issue"}:
             return None
         url = subject.get("url")
         if not url:
             return None
         if not url.startswith("https://api.github.com/"):
             raise ValueError(f"Unexpected GitHub API URL: {url}")
-        async with limit:
-            item = await api(url.removeprefix("https://api.github.com"))
+        item = await request(url.removeprefix("https://api.github.com"))
         if subject["type"] == "PullRequest":
             if item.get("draft"):
                 return "draft"
@@ -58,33 +62,43 @@ async def sweep(repo, apply=False, clear_all=False):
                 return "merged"
         return "closed" if item.get("state") == "closed" else None
 
-    # Snapshot all pages before deleting so pagination cannot skip threads.
-    statuses = await asyncio.gather(*(status(thread) for thread in threads))
-    for thread, state in zip(threads, statuses):
-        if state:
-            prefix = f"{thread['repository']['full_name']}: " if not repo else ""
-            print(f"[{state}] {prefix}{thread['subject']['title']}")
-            if apply:
-                await api(f"/notifications/threads/{thread['id']}", "--method", "DELETE")
+    async with asyncio.TaskGroup() as tasks:
+        statuses = [tasks.create_task(status(thread)) for thread in threads]
+    async with asyncio.TaskGroup() as tasks:
+        for thread, task in zip(threads, statuses):
+            if state := task.result():
+                prefix = f"{thread['repository']['full_name']}: " if not repo else ""
+                print(f"[{state}] {prefix}{thread['subject']['title']}")
+                if command != "list" and not dry_run:
+                    tasks.create_task(request(f"/notifications/threads/{thread['id']}", "--method", "DELETE"))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="github-notification", description="Preview GitHub notifications to mark done."
+        prog="github-notification", description="List, clear, or sweep GitHub notifications."
     )
-    parser.add_argument("repo", nargs="?", type=repository, metavar="OWNER/REPO")
-    parser.add_argument("--apply", action="store_true", help="mark matching threads done")
-    parser.add_argument(
-        "--clear-all", action="store_true",
-        help="include read/unread notifications of every type; omit repo for all repositories",
-    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("list", "List notifications without changing them."),
+        ("clear", "Mark notifications done."),
+        ("sweep", "Mark notifications for draft/merged/closed PRs and closed issues done."),
+    ):
+        command = commands.add_parser(name, help=help_text, description=help_text)
+        command.add_argument("repo", nargs="?", type=repository, metavar="OWNER/REPO",
+                             help="repository name or URL; omit for all repositories")
+        scope = command.add_mutually_exclusive_group()
+        scope.add_argument("--unread", dest="all_notifications", action="store_false",
+                           help="select unread notifications (default)")
+        scope.add_argument("--all", dest="all_notifications", action="store_true",
+                           help="select read and unread notifications")
+        command.set_defaults(all_notifications=False, dry_run=False)
+        if name != "list":
+            command.add_argument("--dry-run", action="store_true", help="preview without changes")
     args = parser.parse_args(argv)
-    if not args.repo and not args.clear_all:
-        parser.error("repository is required unless --clear-all is used")
     try:
-        asyncio.run(sweep(args.repo, args.apply, args.clear_all))
-    except (OSError, RuntimeError, ValueError) as error:
-        parser.exit(1, f"error: {error}\n")
+        asyncio.run(run(**vars(args)))
+    except* (OSError, RuntimeError, ValueError) as errors:
+        parser.exit(1, f"error: {errors.exceptions[0]}\n")
 
 
 if __name__ == "__main__":
