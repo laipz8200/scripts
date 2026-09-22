@@ -8,7 +8,7 @@
 
 | 脚本 | 说明 |
 | --- | --- |
-| [GitHub Notification Sweeper](github-notification-sweeper/README.zh-CN.md) | 列出任意 `OWNER/REPO` 仓库中已处理的未读 GitHub 通知，并可通过 `--apply` 将它们标记为完成。 |
+| [GitHub Notification](github-notification/README.zh-CN.md) | 通过 `list`、`clear`、`sweep` 管理 GitHub 通知，统一支持 `--unread`（默认）和 `--all` 筛选。 |
 
 ## 许可证
 
